@@ -1,8 +1,8 @@
 // lib/screens/todo_list_page.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../database-helper.dart';
-import '../todo-class.dart';
+import '../database/database-helper.dart';
+import '../model/todo_class.dart';
 
 class TodoListPage extends StatefulWidget {
   const TodoListPage({super.key});
