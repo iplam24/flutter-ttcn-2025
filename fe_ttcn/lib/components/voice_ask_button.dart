@@ -5,7 +5,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import '../mock/mock_data.dart';
+import '../mock/mock_data.dart'; // Giả định mock_data.dart tồn tại
 
 class ParsedIntent {
   final String type;
@@ -14,7 +14,7 @@ class ParsedIntent {
 }
 
 class NlpRouter {
-  // Chuẩn hoá câu nói
+  // Chuẩn hoá câu nói: Loại bỏ dấu câu, chuyển về chữ thường, loại bỏ khoảng trắng thừa
   static String _norm(String s) => s
       .toLowerCase()
       .replaceAll(RegExp(r'[!?(),.:;]'), ' ')
@@ -27,21 +27,33 @@ class NlpRouter {
     return _resolveVietnameseDate(q, nowLocal);
   }
 
-  /// Điều hướng intent cơ bản (tkb | lich_1_ngay)
+  /// Điều hướng intent cơ bản (tkb | lich_1_ngay | lich_ca_tuan)
   static ParsedIntent parse(String utterance, DateTime nowLocal) {
     final q = _norm(utterance);
 
+    // Intent: THỜI KHÓA BIỂU
     final hasTkb = q.contains('thời khóa biểu') ||
         q.contains('thời khoá biểu') ||
         q.contains('tkb') ||
         q.contains('môn');
     if (hasTkb) {
+      // Phân biệt TKB 1 ngày hay cả tuần
+      if (q.contains('cả tuần') || q.contains('toàn tuần') || q.contains('hết tuần')) {
+        final date = _resolveWeekStartForApi(q, nowLocal); // Ngày bắt đầu tuần (thứ 2)
+        return ParsedIntent('tkb_ca_tuan', {'date': date});
+      }
       final date = _resolveVietnameseDate(q, nowLocal);
-      return ParsedIntent('tkb', {'date': date});
+      return ParsedIntent('tkb_1_ngay', {'date': date});
     }
 
+    // Intent: LỊCH (Chung chung)
     final hasLich = RegExp(r'\blịch\b').hasMatch(q) || q.contains('schedule');
     if (hasLich) {
+      // Phân biệt Lịch 1 ngày hay cả tuần
+      if (q.contains('cả tuần') || q.contains('toàn tuần') || q.contains('hết tuần')) {
+        final date = _resolveWeekStartForApi(q, nowLocal);
+        return ParsedIntent('lich_ca_tuan', {'date': date});
+      }
       final date = _resolveVietnameseDate(q, nowLocal);
       return ParsedIntent('lich_1_ngay', {'date': date});
     }
@@ -50,7 +62,28 @@ class NlpRouter {
   }
 
   // ====== Date resolvers ======
+
+  /// Lấy ngày Thứ Hai của tuần được nhắc đến
+  static DateTime _resolveWeekStartForApi(String q, DateTime now) {
+    final normalizedQ = _norm(q);
+    int weekShift = 0;
+
+    if (normalizedQ.contains('tuần sau') || normalizedQ.contains('tuần tới')) {
+      weekShift = 1;
+    } else if (normalizedQ.contains('tuần trước')) {
+      weekShift = -1;
+    }
+    // Mặc định tuần này nếu không có từ khóa
+
+    // Thứ Hai của tuần hiện tại (hoặc tuần tương ứng)
+    final mondayThisWeek = now.subtract(Duration(days: now.weekday - DateTime.monday));
+    final target = mondayThisWeek.add(Duration(days: 7 * weekShift));
+    return DateTime(target.year, target.month, target.day);
+  }
+
+
   static DateTime? _parseExplicitDateInParentheses(String q, DateTime now) {
+    // Định dạng (d/m) hoặc (d/m/yyyy)
     final m = RegExp(r'\(\s*(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?\s*\)').firstMatch(q);
     if (m == null) return null;
     final dd = int.parse(m.group(1)!);
@@ -78,18 +111,21 @@ class NlpRouter {
     if (explicit != null) return explicit;
 
     int weekShift = 0;
-    bool pinnedThisWeek = false;
-    if (q.contains('tuần sau') || q.contains('tuần tới')) { weekShift = 1; pinnedThisWeek = true; }
-    else if (q.contains('tuần trước')) { weekShift = -1; pinnedThisWeek = true; }
-    else if (q.contains('tuần này')) { weekShift = 0; pinnedThisWeek = true; }
+    bool pinnedToWeek = false; // Đã xác định rõ tuần (trước/này/sau)
+    if (q.contains('tuần sau') || q.contains('tuần tới')) { weekShift = 1; pinnedToWeek = true; }
+    else if (q.contains('tuần trước')) { weekShift = -1; pinnedToWeek = true; }
+    else if (q.contains('tuần này')) { weekShift = 0; pinnedToWeek = true; }
 
-    if (pinnedThisWeek) {
-      final mondayThisWeek = now.subtract(Duration(days: now.weekday - DateTime.monday));
-      final target = mondayThisWeek.add(Duration(days: 7 * weekShift + (wd - DateTime.monday)));
+    if (pinnedToWeek) {
+      // Ngày Thứ Hai của tuần được chỉ định
+      final mondayOfWeek = now.subtract(Duration(days: now.weekday - DateTime.monday))
+          .add(Duration(days: 7 * weekShift));
+      final target = mondayOfWeek.add(Duration(days: (wd - DateTime.monday)));
       return DateTime(target.year, target.month, target.day);
     }
 
-    final delta = (wd - now.weekday + 7) % 7; // gần nhất, kể cả hôm nay
+    // Gần nhất (kể cả hôm nay)
+    final delta = (wd - now.weekday + 7) % 7;
     final target = now.add(Duration(days: delta));
     return DateTime(target.year, target.month, target.day);
   }
@@ -115,6 +151,7 @@ class NlpRouter {
     final byWeekday = _resolveWeekdayPhrase(q, now);
     if (byWeekday != null) return byWeekday;
 
+    // Định dạng đầy đủ (d/m/yyyy)
     final fullDate = RegExp(r'(\b\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})').firstMatch(q);
     if (fullDate != null) {
       final dd = int.parse(fullDate.group(1)!);
@@ -123,17 +160,21 @@ class NlpRouter {
       return DateTime(yyyy, mm, dd);
     }
 
+    // Định dạng ngắn (d/m) hoặc 'ngày d/m'
     final shortDate = RegExp(r'(?:\bngày\s+)?(\d{1,2})[\/\-](\d{1,2})(?!\d)').firstMatch(q);
     if (shortDate != null) {
       final dd = int.parse(shortDate.group(1)!);
       final mm = int.parse(shortDate.group(2)!);
+      // Sử dụng năm hiện tại
       return DateTime(now.year, mm, dd);
     }
 
+    // Mặc định là hôm nay nếu không tìm thấy thông tin ngày tháng cụ thể
     return DateTime(now.year, now.month, now.day);
   }
 }
 
+// API TkbApi được giữ nguyên, chỉ đổi tên intent tkb -> tkb_1_ngay
 class TkbApi {
   final String baseUrl;
   final http.Client _client;
@@ -142,14 +183,17 @@ class TkbApi {
       : _client = client ?? http.Client();
 
   /// Dùng DUY NHẤT demoData (day: d/M/yyyy)
-  Future<List<dynamic>> fetchByDate(DateTime date) async {
+  /// Có thể dùng cho cả 1 ngày và cả tuần (nếu API có hỗ trợ lọc tuần)
+  Future<List<dynamic>> fetchByDate(DateTime date, {bool isWeek = false}) async {
     if (useMock || baseUrl.isEmpty) {
       await Future.delayed(const Duration(milliseconds: 120));
 
+      // Lọc theo ngày (cho 1 ngày)
       final dayKey = DateFormat('d/M/yyyy').format(date);
-
       final list = demoData
-          .where((e) => (e['day']?.toString() ?? '') == dayKey)
+          .where((e) => isWeek
+          ? true // Với mock data, có thể cần logic phức tạp hơn. Giả sử mock chứa dữ liệu đủ 1 tuần.
+          : (e['day']?.toString() ?? '') == dayKey)
           .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
           .toList();
 
@@ -157,9 +201,12 @@ class TkbApi {
       return list;
     }
 
-    // API thật (nếu sau này bật) — vẫn giữ để khỏi sửa code nơi khác
+    // Giữ nguyên logic API thật, có thể cần chỉnh sửa nếu API hỗ trợ 'week'
     final ymd = DateFormat('yyyy-MM-dd').format(date);
-    final uri = Uri.parse('$baseUrl/tkb').replace(queryParameters: {'date': ymd});
+    final queryParams = isWeek ? {'week_start_date': ymd} : {'date': ymd};
+    final path = isWeek ? 'tkb_week' : 'tkb';
+
+    final uri = Uri.parse('$baseUrl/$path').replace(queryParameters: queryParams);
     late http.Response resp;
     try {
       resp = await _client.get(uri, headers: {'Accept': 'application/json'});
@@ -177,6 +224,7 @@ class TkbApi {
   }
 }
 
+// API LichApi được giữ nguyên, có thêm logic isWeek
 class LichApi {
   final String baseUrl;
   final http.Client _client;
@@ -185,13 +233,15 @@ class LichApi {
       : _client = client ?? http.Client();
 
   /// Cũng dùng DUY NHẤT demoData (lọc theo ngày giống TKB)
-  Future<List<dynamic>> fetchByDate(DateTime date) async {
+  Future<List<dynamic>> fetchByDate(DateTime date, {bool isWeek = false}) async {
     if (useMock || baseUrl.isEmpty) {
       await Future.delayed(const Duration(milliseconds: 120));
       final dayKey = DateFormat('d/M/yyyy').format(date);
 
       final list = demoData
-          .where((e) => (e['day']?.toString() ?? '') == dayKey)
+          .where((e) => isWeek
+          ? true // Với mock data, có thể cần logic phức tạp hơn. Giả sử mock chứa dữ liệu đủ 1 tuần.
+          : (e['day']?.toString() ?? '') == dayKey)
           .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
           .toList();
 
@@ -199,9 +249,12 @@ class LichApi {
       return list;
     }
 
-    // API thật (giữ nguyên để không phá interface)
+    // Giữ nguyên logic API thật, có thể cần chỉnh sửa nếu API hỗ trợ 'week'
     final ymd = DateFormat('yyyy-MM-dd').format(date);
-    final uri = Uri.parse('$baseUrl/lich').replace(queryParameters: {'date': ymd});
+    final queryParams = isWeek ? {'week_start_date': ymd} : {'date': ymd};
+    final path = isWeek ? 'lich_week' : 'lich';
+
+    final uri = Uri.parse('$baseUrl/$path').replace(queryParameters: queryParams);
     late http.Response resp;
     try {
       resp = await _client.get(uri, headers: {'Accept': 'application/json'});
@@ -246,6 +299,8 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
   final FlutterTts _tts = FlutterTts();
   bool _isListening = false;
   String _lastTranscript = '';
+  // Biến để theo dõi việc gọi hàm hoàn thành để tránh gọi nhiều lần
+  bool _isHandlingTranscript = false;
 
   @override
   void initState() {
@@ -254,22 +309,34 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
     _initTts();
   }
 
+  // Cải thiện cấu hình TTS để có giọng nói chuẩn hơn
   Future<void> _initTts() async {
     try {
       final engines = await _tts.getEngines;
-      if (engines is List && engines.contains('com.google.android.tts')) {
-        await _tts.setEngine('com.google.android.tts');
+      // Ưu tiên Google TTS cho chất lượng cao hơn trên Android
+      const preferredEngine = 'com.google.android.tts';
+      if (engines is List && engines.contains(preferredEngine)) {
+        await _tts.setEngine(preferredEngine);
       }
-    } catch (_) {}
+    } catch (_) {
+      // Bỏ qua lỗi engine
+    }
     try {
       final voices = await _tts.getVoices;
       if (voices is List && voices.isNotEmpty) {
-        final chosen = Map<String, dynamic>.from(voices.first);
+        // Cố gắng tìm giọng "nữ" cho tiếng Việt nếu có
+        final femaleVoice = voices.firstWhere(
+                (v) => (v as Map)['locale']?.startsWith('vi') == true && (v as Map)['name']?.toLowerCase().contains('female') == true,
+            orElse: () => voices.firstWhere((v) => (v as Map)['locale']?.startsWith('vi') == true, orElse: () => voices.first));
+
+        final chosen = Map<String, dynamic>.from(femaleVoice as Map);
         await _tts.setVoice(chosen.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')));
       }
-    } catch (_) {}
+    } catch (_) {
+      // Bỏ qua lỗi voice
+    }
     await _tts.setLanguage('vi-VN');
-    await _tts.setSpeechRate(0.9);
+    await _tts.setSpeechRate(0.95); // Tăng tốc độ nhẹ
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
   }
@@ -278,25 +345,23 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
     if (_isListening) {
       await _speech.stop();
       setState(() => _isListening = false);
-      if (_lastTranscript.trim().isNotEmpty) {
+      if (_lastTranscript.trim().isNotEmpty && !_isHandlingTranscript) {
+        // Gọi _onFinalTranscript khi người dùng chủ động dừng (nhấn nút lần 2)
         await _onFinalTranscript(_lastTranscript);
       }
       return;
     }
 
-    final available = await _speech.initialize(
-      onStatus: (s) {
-        if (s == 'notListening' && _lastTranscript.isNotEmpty) {
-          _onFinalTranscript(_lastTranscript);
-        }
-      },
-      onError: (e) => widget.onCompleted?.call(transcript: _lastTranscript, error: e),
-    );
+    _lastTranscript = '';
+    _isHandlingTranscript = false;
+
+    // Tăng thời gian chờ và thử lại khi init STT
+    final available = await _initSpeechToText(retries: 3);
 
     if (!available) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Không khởi tạo được nhận dạng giọng nói')),
+          const SnackBar(content: Text('Không khởi tạo được nhận dạng giọng nói, vui lòng thử lại')),
         );
       }
       widget.onCompleted?.call(transcript: _lastTranscript, error: 'Speech init unavailable');
@@ -310,9 +375,17 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
       listenFor: const Duration(seconds: 15),
       pauseFor: const Duration(seconds: 2),
       onResult: (result) {
-        setState(() => _lastTranscript = result.recognizedWords);
-        if (result.finalResult && _lastTranscript.isNotEmpty) {
-          _speech.stop();
+        // Logic sửa lỗi: confidence > 0.6 là đủ để chấp nhận kết quả tốt
+        if (result.confidence > 0.6) {
+          setState(() => _lastTranscript = result.recognizedWords);
+        } else {
+          // Vẫn lưu trữ kết quả, nhưng không cập nhật UI nếu quá rè/tin cậy thấp
+          _lastTranscript = result.recognizedWords;
+        }
+
+        if (result.finalResult && _lastTranscript.isNotEmpty && !_isHandlingTranscript) {
+          // Khi nhận dạng xong (finalResult), dừng nghe và xử lý
+          unawaited(_speech.stop());
           setState(() => _isListening = false);
           _onFinalTranscript(_lastTranscript);
         }
@@ -320,18 +393,66 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
     );
   }
 
+  // Thử lại khi khởi tạo SpeechToText
+  Future<bool> _initSpeechToText({int retries = 1}) async {
+    // 💡 Tinh chỉnh: Thêm delay nhỏ trước khi init để tăng độ mượt mà/ổn định
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    for (int i = 0; i < retries; i++) {
+      try {
+        final available = await _speech.initialize(
+          onStatus: (s) {
+            // 💡 Tinh chỉnh: Loại bỏ việc gọi _onFinalTranscript ở đây
+            // vì nó có thể trùng lặp với logic trong onResult hoặc _toggleRecord.
+            // Chỉ cần xử lý lỗi ở đây.
+            if (s == 'error' && _lastTranscript.isNotEmpty) {
+              widget.onCompleted?.call(transcript: _lastTranscript, error: 'STT Error: $s');
+            }
+          },
+          onError: (e) => widget.onCompleted?.call(transcript: _lastTranscript, error: e),
+        );
+        if (available) return true;
+      } catch (e) {
+        // Đợi một chút rồi thử lại
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    return false;
+  }
+
+
   Future<void> _onFinalTranscript(String text) async {
-    unawaited(_tts.speak(text));
+    // Ngăn chặn việc gọi lại khi đã xử lý
+    if (_isHandlingTranscript) return;
+    _isHandlingTranscript = true;
+
+    // 🏆 Đảm bảo chỉ phát lại câu nói của người dùng (transcript)
+    if (text.isNotEmpty) {
+      unawaited(_tts.speak(text));
+    }
 
     final nowLocal = DateTime.now();
-    final resolvedDate = NlpRouter.resolveDateForApi(text, nowLocal);
-    final apiDate = DateFormat('yyyy-MM-dd').format(resolvedDate);
-
     final intent = NlpRouter.parse(text, nowLocal);
+    // Vẫn cần resolve date để gọi API, ngay cả khi không dùng kết quả để đọc
+    final resolvedDate = intent.params['date'] as DateTime? ?? nowLocal;
+    final apiDate = DateFormat('yyyy-MM-dd').format(resolvedDate);
 
     try {
       List<dynamic>? payload;
-      if (intent.type == 'tkb') {
+      // ... (Phần gọi API vẫn giữ nguyên để lấy dữ liệu gửi lên onCompleted)
+
+      if (intent.type == 'tkb_ca_tuan') {
+        payload = await TkbApi(
+          baseUrl: widget.apiBaseUrl,
+          useMock: widget.useMock,
+        ).fetchByDate(resolvedDate, isWeek: true);
+      } else if (intent.type == 'lich_ca_tuan') {
+        payload = await LichApi(
+          baseUrl: widget.apiBaseUrl,
+          useMock: widget.useMock,
+        ).fetchByDate(resolvedDate, isWeek: true);
+      }
+      else if (intent.type == 'tkb_1_ngay') {
         payload = await TkbApi(
           baseUrl: widget.apiBaseUrl,
           useMock: widget.useMock,
@@ -345,6 +466,7 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
         payload = const [];
       }
 
+      // Gọi onCompleted để chuyển kết quả (payload) về widget cha
       widget.onCompleted?.call(
         transcript: text,
         intent: intent,
@@ -358,6 +480,8 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
         error: e,
         apiDate: apiDate,
       );
+    } finally {
+      _isHandlingTranscript = false;
     }
   }
 
@@ -368,8 +492,12 @@ class _VoiceAskButtonState extends State<VoiceAskButton> {
       icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
       label: Text(_isListening ? 'Đang nghe…' : 'Nhấn để hỏi bằng giọng'),
       style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        // Thay đổi màu sắc khi đang nghe để feedback rõ hơn
+        backgroundColor: _isListening ? Colors.red.shade600 : Theme.of(context).primaryColor,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 4,
       ),
     );
   }

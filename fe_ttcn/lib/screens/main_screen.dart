@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'todo_list_page.dart';
 import 'voice_ask_page.dart';
-
+import '../services/notification_service.dart';
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -12,7 +12,15 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
+  @override
+  void initState() {
+    super.initState();
+    // Khi vào màn hình chính, hiện luôn thông báo thời khóa biểu hôm nay
+    //NotificationService.showTodayScheduleNow();
 
+    // Nếu anh muốn: chỉ cần bật 1 lần, sau đó mỗi ngày 6h sẽ tự hiện
+     NotificationService.scheduleEveryMorning();
+  }
   // Danh sách các trang đã được tách ra
   static const List<Widget> _pages = <Widget>[
     TodoListPage(),
