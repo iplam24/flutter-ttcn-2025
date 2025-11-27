@@ -1,280 +1,145 @@
-import 'dart:io' show Platform;
-
+// lib/services/notification_service.dart
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:intl/intl.dart';
-
-import '../mock/mock_data.dart';
+import '../database/database_helper.dart';
+import '../model/schedule_item.dart';
 
 class NotificationService {
-  static final FlutterLocalNotificationsPlugin _plugin =
-  FlutterLocalNotificationsPlugin();
-
-  static bool _tzInitialized = false;
+  static final _notifications = FlutterLocalNotificationsPlugin();
 
   static Future<void> init() async {
-    // Khởi tạo timezone 1 lần
-    if (!_tzInitialized) {
-      tz.initializeTimeZones();
-      tz.setLocalLocation(tz.getLocation('Asia/Ho_Chi_Minh'));
-      _tzInitialized = true;
+    tz.initializeTimeZones();
+
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const settings = InitializationSettings(android: android);
+    await _notifications.initialize(settings);
+  }
+
+  static Future<void> showTestNotification() async {
+    const androidDetails = AndroidNotificationDetails(
+      'test_channel',
+      'Test Channel',
+      channelDescription: 'Kênh dùng để kiểm tra thông báo',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+    await _notifications.show(
+      999,
+      'Test OK!',
+      'Thông báo chạy ngon lành từ app!',
+      const NotificationDetails(android: androidDetails),
+    );
+  }
+
+  // --- HÀM HỖ TRỢ XÂY DỰNG NỘI DUNG TKB ---
+  static Future<Map<String, String>> _buildScheduleContent(DateTime dayToNotify) async {
+    final schedule = await DatabaseHelper.instance.getScheduleForDay(dayToNotify);
+
+    String title;
+    String body;
+
+    if (dayToNotify.weekday == DateTime.sunday || schedule.isEmpty) {
+      title = 'Hôm nay không có lịch học!';
+      body = 'Hãy dành thời gian làm To-Do hoặc nghỉ ngơi nhé.';
+    } else {
+      final dayOfWeek = DateFormat('EEEE', 'vi_VN').format(dayToNotify);
+      final date = DateFormat('dd/MM', 'vi_VN').format(dayToNotify);
+      title = '$dayOfWeek, $date: Bạn có ${schedule.length} môn học';
+
+      final subjectDetails = schedule.map((s) =>
+      '• ${s.tenMon} (Tiết ${s.tietHoc}, P. ${s.phong})'
+      ).join('\n');
+
+      body = 'Chi tiết:\n$subjectDetails';
     }
 
-    const androidSettings =
-    AndroidInitializationSettings('@mipmap/ic_launcher');
+    return {'title': title, 'body': body};
+  }
 
-    const iosSettings = DarwinInitializationSettings();
+  // === HÀM TEST MỚI: HIỂN THỊ TKB NGAY LẬP TỨC CHO NGÀY HÔM NAY ===
+  static Future<void> showTestScheduleNotification() async {
+    final today = DateTime.now();
+    final content = await _buildScheduleContent(today);
 
-    const initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
+    final androidDetails = AndroidNotificationDetails(
+      'test_schedule_channel',
+      'Test TKB Ngay lập tức',
+      channelDescription: 'Test nội dung TKB',
+      importance: Importance.max,
+      priority: Priority.high,
+      styleInformation: BigTextStyleInformation(content['body']!),
     );
 
-    await _plugin.initialize(initSettings);
+    await _notifications.show(
+      1000, // ID test riêng
+      'TEST TKB: ${content['title']}',
+      content['body'],
+      NotificationDetails(android: androidDetails),
+    );
+  }
 
-    // 🔔 Xin quyền hiển thị notification
-    if (Platform.isAndroid) {
-      final androidImpl =
-      _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
-      await androidImpl?.requestNotificationsPermission();
-    }
+  // --- HÀM LÊN LỊCH CHÍNH (6h Sáng và 12h Trưa) ---
+  static Future<void> scheduleDailyReminders() async {
+    const notifications = [
+      {'id': 0, 'hour': 6, 'name': 'Sáng'},
+      {'id': 1, 'hour': 12, 'name': 'Trưa'},
+    ];
 
-    if (Platform.isIOS) {
-      final iosImpl = _plugin.resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin>();
-      await iosImpl?.requestPermissions(
-        alert: true,
-        badge: true,
-        sound: true,
+    await _notifications.cancel(0);
+    await _notifications.cancel(1);
+
+    for (var config in notifications) {
+      final notificationId = config['id'] as int;
+      final hour = config['hour'] as int;
+      final name = config['name'] as String;
+
+      final now = tz.TZDateTime.now(tz.local);
+      var scheduledDate = tz.TZDateTime(
+        tz.local,
+        now.year,
+        now.month,
+        now.day,
+        hour,
+        0,
       );
-    }
-  }
 
-  /// Build TKB theo buổi trong NGÀY HÔM NAY
-  /// [morning] = true  => lấy các tiết bắt đầu trước 12:00
-  /// [morning] = false => lấy các tiết bắt đầu từ 12:00 trở đi
-  static String? _buildTodaySchedulePart({required bool morning}) {
-    final now = DateTime.now();
-    final todayStr = DateFormat('d/M/yyyy').format(now);
-
-    final todays =
-    demoData.where((item) => item['day'] == todayStr).toList();
-
-    if (todays.isEmpty) return null;
-
-    final filtered = todays.where((s) {
-      final startStr = (s['start'] ?? '').toString();
-      if (!startStr.contains(':')) return false;
-      final hour = int.tryParse(startStr.split(':')[0]) ?? 0;
-      if (morning) {
-        return hour < 12; // buổi sáng
-      } else {
-        return hour >= 12; // buổi chiều
+      if (scheduledDate.isBefore(now)) {
+        scheduledDate = scheduledDate.add(const Duration(days: 1));
       }
-    }).toList();
 
-    if (filtered.isEmpty) return null;
+      final dayToNotify = DateTime(scheduledDate.year, scheduledDate.month, scheduledDate.day);
+      final content = await _buildScheduleContent(dayToNotify);
 
-    final buffer = StringBuffer();
+      final androidDetails = AndroidNotificationDetails(
+        'schedule_daily_channel_$notificationId',
+        'Thông báo TKB $name',
+        channelDescription: 'Thông báo TKB vào $hour:00 hàng ngày',
+        importance: Importance.max,
+        priority: Priority.high,
+        styleInformation: BigTextStyleInformation(content['body']!),
+      );
 
-    for (final s in filtered) {
-      final start = s['start'] ?? '';
-      final end = s['end'] ?? '';
-      final subject = s['subject_name'] ?? '';
-      final room = s['room_name'] ?? '';
-      final sessionType = s['session_type'] ?? '';
+      final platformDetails = NotificationDetails(android: androidDetails);
 
-      buffer.writeln('⏰ $start–$end | $subject');
-      buffer.writeln('   $sessionType • Phòng $room');
-      buffer.writeln('');
+      await _notifications.zonedSchedule(
+        notificationId,
+        content['title'],
+        content['body'],
+        scheduledDate,
+        platformDetails,
+        androidScheduleMode: AndroidScheduleMode.inexact,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+
+      debugPrint('Scheduled ${name} reminder for ${DateFormat('dd/MM/yyyy HH:mm').format(scheduledDate)} daily (ID $notificationId).');
     }
-
-    return buffer.toString().trim();
   }
 
-  /// Build toàn bộ TKB hôm nay (cả sáng + chiều) – dùng cho test
-  static String? buildTodayScheduleText() {
-    final now = DateTime.now();
-    final todayStr = DateFormat('d/M/yyyy').format(now);
-
-    final todays =
-    demoData.where((item) => item['day'] == todayStr).toList();
-
-    if (todays.isEmpty) return null;
-
-    final buffer = StringBuffer();
-
-    for (final s in todays) {
-      final start = s['start'] ?? '';
-      final end = s['end'] ?? '';
-      final subject = s['subject_name'] ?? '';
-      final room = s['room_name'] ?? '';
-      final sessionType = s['session_type'] ?? '';
-
-      buffer.writeln('⏰ $start–$end | $subject');
-      buffer.writeln('   $sessionType • Phòng $room');
-      buffer.writeln('');
-    }
-
-    return buffer.toString().trim();
-  }
-
-  /// Gửi notification NGAY (dùng text toàn ngày) – chủ yếu để test
-  static Future<void> showTodayScheduleNow() async {
-    final body = buildTodayScheduleText();
-    if (body == null || body.isEmpty) return;
-
-    const androidDetails = AndroidNotificationDetails(
-      'timetable_channel',
-      'Thời khóa biểu',
-      channelDescription: 'Hiển thị toàn bộ thời khóa biểu hôm nay',
-      importance: Importance.max,
-      priority: Priority.high,
-      visibility: NotificationVisibility.public,
-      styleInformation: BigTextStyleInformation(''),
-    );
-
-    const iosDetails = DarwinNotificationDetails();
-
-    const notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _plugin.show(
-      1,
-      'Thời khóa biểu hôm nay',
-      body,
-      notificationDetails,
-    );
-  }
-
-  // 🧪 TEST: gửi thông báo sau N giây bằng Future.delayed (không dùng alarm)
-  static Future<void> scheduleTestAfterSeconds(int seconds) async {
-    final body = buildTodayScheduleText();
-    if (body == null || body.isEmpty) {
-      print('[NotificationService] Không có TKB hôm nay, không schedule test');
-      return;
-    }
-
-    print(
-        '[NotificationService] Sẽ gửi thông báo TEST sau $seconds giây kể từ bây giờ');
-
-    Future.delayed(Duration(seconds: seconds), () async {
-      await showTodayScheduleNow();
-    });
-  }
-
-  /// 🔔 Lên lịch gửi TKB BUỔI SÁNG lúc 6:00
-  static Future<void> scheduleMorningAt6() async {
-    final bodyMorning = _buildTodaySchedulePart(morning: true);
-    if (bodyMorning == null || bodyMorning.isEmpty) {
-      print(
-          '[NotificationService] Không có TKB buổi sáng hôm nay, không schedule 6h');
-      return;
-    }
-
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduled =
-    tz.TZDateTime(tz.local, now.year, now.month, now.day, 6, 0);
-
-    // Nếu 6h hôm nay đã qua thì chuyển sang ngày mai
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
-    }
-
-    print(
-        '[NotificationService] Schedule MORNING lúc: $scheduled (6h sáng – buổi sáng)');
-
-    const androidDetails = AndroidNotificationDetails(
-      'timetable_channel_morning',
-      'Thời khóa biểu buổi sáng',
-      channelDescription: 'Thông báo TKB buổi sáng hằng ngày',
-      importance: Importance.max,
-      priority: Priority.high,
-      visibility: NotificationVisibility.public,
-      styleInformation: BigTextStyleInformation(''),
-    );
-
-    const iosDetails = DarwinNotificationDetails();
-
-    const notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _plugin.zonedSchedule(
-      10, // id riêng cho buổi sáng
-      'Thời khóa biểu buổi sáng hôm nay',
-      bodyMorning,
-      scheduled,
-      notificationDetails,
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.wallClockTime,
-      matchDateTimeComponents: DateTimeComponents.time, // lặp mỗi ngày 6h
-    );
-  }
-
-  /// 🔔 Lên lịch gửi TKB BUỔI CHIỀU lúc 12:00 trưa
-  static Future<void> scheduleAfternoonAt12() async {
-    final bodyAfternoon = _buildTodaySchedulePart(morning: false);
-    if (bodyAfternoon == null || bodyAfternoon.isEmpty) {
-      print(
-          '[NotificationService] Không có TKB buổi chiều hôm nay, không schedule 12h');
-      return;
-    }
-
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduled =
-    tz.TZDateTime(tz.local, now.year, now.month, now.day, 12, 0);
-
-    // Nếu 12h hôm nay đã qua thì chuyển sang ngày mai
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
-    }
-
-    print(
-        '[NotificationService] Schedule AFTERNOON lúc: $scheduled (12h trưa – buổi chiều)');
-
-    const androidDetails = AndroidNotificationDetails(
-      'timetable_channel_afternoon',
-      'Thời khóa biểu buổi chiều',
-      channelDescription: 'Thông báo TKB buổi chiều hằng ngày',
-      importance: Importance.max,
-      priority: Priority.high,
-      visibility: NotificationVisibility.public,
-      styleInformation: BigTextStyleInformation(''),
-    );
-
-    const iosDetails = DarwinNotificationDetails();
-
-    const notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _plugin.zonedSchedule(
-      11, // id riêng cho buổi chiều
-      'Thời khóa biểu buổi chiều hôm nay',
-      bodyAfternoon,
-      scheduled,
-      notificationDetails,
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.wallClockTime,
-      matchDateTimeComponents: DateTimeComponents.time, // lặp mỗi ngày 12h
-    );
-  }
-
-  /// 📅 Hàm tổng: gọi 1 lần để đăng ký cả 2 lịch (sáng 6h + trưa 12h)
-  ///
-  /// Trước đây anh dùng scheduleEveryMorning(), giờ em đổi hàm này
-  /// thành "đăng ký cả sáng + chiều" luôn cho tiện.
   static Future<void> scheduleEveryMorning() async {
-    await scheduleMorningAt6();
-    await scheduleAfternoonAt12();
+    return scheduleDailyReminders();
   }
 }

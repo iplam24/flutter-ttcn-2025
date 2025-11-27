@@ -2,11 +2,14 @@
 
     <!-- Quyền ghi âm để Speech-to-Text hoạt động -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
-        android:label="fe_ttcn"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:label="fe_ttcn"
+        android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
             android:name=".MainActivity"

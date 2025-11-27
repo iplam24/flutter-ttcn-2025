@@ -2,7 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../components/voice_ask_button.dart';
-import '../widgets/schedule_cards.dart'; // Import widget mới
+import '../model/schedule_item.dart';
+import '../widgets/schedule_cards.dart';
 
 class VoiceAskPage extends StatefulWidget {
   const VoiceAskPage({super.key});
@@ -12,12 +13,9 @@ class VoiceAskPage extends StatefulWidget {
 }
 
 class _VoiceAskPageState extends State<VoiceAskPage> {
-  String? transcript;
-  String? intentType;
-  DateTime? intentDate;
-  String? apiDate; // yyyy-MM-dd để gọi API/mock
-  List<dynamic>? payload; // dữ liệu mock trả về
-  Object? error;
+  String _transcript = 'Chưa có gì...';
+  String _message = 'Nhấn micro và hỏi: "TKB hôm nay", "Lịch thứ 4", "Môn tuần này"...';
+  List<ScheduleItem> _schedule = [];
 
   String _fmtDate(DateTime d) =>
       DateFormat('EEEE, dd/MM/yyyy', 'vi_VN').format(d);
@@ -27,98 +25,121 @@ class _VoiceAskPageState extends State<VoiceAskPage> {
     final today = DateTime.now();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Demo Voice Ask (Mock)')),
+      appBar: AppBar(
+        title: const Text('Hỏi TKB bằng giọng nói (Local DB)'),
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+      ),
       body: Column(
         children: [
-          const SizedBox(height: 12),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Hôm nay: ${_fmtDate(today)}\n'
-                  'Ví dụ nói:\n'
-                  '• "thời khóa biểu ngày mai"\n'
-                  '• "lịch thứ hai (29/9/2025)"',
-              style: Theme.of(context).textTheme.bodyMedium,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Text(
+                  'Hôm nay: ${_fmtDate(today)}',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Thử nói:\n'
+                      '• "TKB hôm nay" • "Lịch thứ ba tuần sau"\n'
+                      '• "Môn ngày mai" • "Cả tuần này có những môn gì"',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: Colors.grey),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 10),
-          Center(
+
+          // DÙNG VOICE ASK BUTTON MỚI – DỮ LIỆU TỪ SQLITE LOCAL
+          // ** LƯU Ý: CẦN TẠO FILE `voice_ask_button.dart` **
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
             child: VoiceAskButton(
-              apiBaseUrl: '', // rỗng => dùng mock
-              useMock: true, // khi có API thật: đổi thành false + set baseUrl
-              onCompleted: ({
+              onResult: ({
                 required String transcript,
-                intent,
-                payload,
-                error,
-                apiDate,
+                required List<ScheduleItem> schedule,
+                required String message,
               }) {
                 setState(() {
-                  this.transcript = transcript;
-                  this.intentType = intent?.type;
-                  this.intentDate = intent?.params['date'];
-                  this.apiDate = apiDate;
-                  this.payload = payload;
-                  this.error = error;
+                  _transcript = transcript;
+                  _message = message;
+                  _schedule = schedule;
                 });
               },
             ),
           ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: [
-                _kv('Bạn nói', transcript),
-                _kv('Intent', intentType),
-                if (intentDate != null)
-                  _kv('Ngày (đã quy đổi)', _fmtDate(intentDate!)),
-                _kv('API date', apiDate),
-                if (error != null) ...[
-                  const SizedBox(height: 8),
-                  Text('Lỗi: $error',
-                      style: const TextStyle(color: Colors.red)),
-                ],
-                const Divider(height: 24),
-                Text('Kết quả (mock):',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                if (payload == null)
-                  const Text('— Chưa có —')
-                else if (payload!.isEmpty)
-                  const Text('— Không có dữ liệu —')
-                else
-                  ...payload!.map((e) {
-                    final map = Map<String, dynamic>.from(e);
-                    final looksUni =
-                        map.containsKey('start') && map.containsKey('end');
-                    // Sử dụng các Card đã được tách ra
-                    return looksUni ? UniScheduleCard(map) : SimpleCard(map);
-                  }).toList(),
-                const SizedBox(height: 24),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  // Widget _kv này chỉ dùng trong trang này, nên giữ nó ở đây
-  Widget _kv(String label, String? value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 150,
-            child: Text(
-              '$label:',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+          const SizedBox(height: 20),
+
+          // Hiển thị kết quả (Giao diện mới)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '🎤 Bạn nói:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple),
+                    ),
+                    Text(_transcript, style: const TextStyle(fontSize: 16)),
+                    const Divider(height: 20),
+                    Text(
+                      '💡 Trợ lý trả lời:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple),
+                    ),
+                    Text(_message, style: const TextStyle(fontSize: 16, fontStyle: FontStyle.italic)),
+                  ],
+                ),
+              ),
             ),
           ),
-          Expanded(child: Text(value ?? '—')),
+
+          const SizedBox(height: 16),
+
+          // Danh sách môn học (Giao diện mới)
+          Expanded(
+            child: _schedule.isEmpty
+                ? const Center(child: Text('Chưa có lịch nào'))
+                : ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: _schedule.length,
+              itemBuilder: (context, index) {
+                final item = _schedule[index];
+                return Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  child: ListTile(
+                    leading: Container(
+                      width: 40, height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        item.tietHoc.split('-').first,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    title: Text(item.tenMonHoc, style: const TextStyle(fontWeight: FontWeight.w500)),
+                    subtitle: Text('${item.phongHoc} • Tiết ${item.tietHoc}'),
+                    trailing: Text(item.giangVien, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );

@@ -1,42 +1,60 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:intl/intl.dart';
-import 'package:intl/date_symbol_data_local.dart';
-
-import 'screens/main_screen.dart';
 import 'services/notification_service.dart';
+import 'screens/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  Intl.defaultLocale = 'vi_VN';
-  await initializeDateFormatting('vi_VN');
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    print("Lỗi khi tải file .env: $e");
+  }
 
-  //  Khởi tạo notification plugin
   await NotificationService.init();
-
-  //await NotificationService.scheduleTestAfterSeconds(60);
-  await NotificationService.scheduleEveryMorning();
- // await NotificationService.scheduleTestInNextMinute();
-  runApp(const IntegratedApp());
+  runApp(const MyApp());
 }
 
-class IntegratedApp extends StatelessWidget {
-  const IntegratedApp({super.key});
-
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Thời khóa biểu',
+      title: 'TKB & To-Do',
+      theme: ThemeData(
+        // === CẢI TIẾN: THAY ĐỔI MÀU CHỦ ĐẠO SANG BLUE ===
+        primarySwatch: Colors.blue,
+        // ------------------------------------------------
+        scaffoldBackgroundColor: Colors.white, // Nền trắng tinh khôi
+        appBarTheme: const AppBarTheme(
+          elevation: 0,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none,
+          ),
+          fillColor: Colors.blue.shade50, // Nền input màu xanh nhạt
+          filled: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
+      ),
+      home: const LoginScreen(),
+      debugShowCheckedModeBanner: false,
+
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
       ],
       supportedLocales: const [
         Locale('vi', 'VN'),
+        Locale('en', 'US'),
       ],
-      home: const MainScreen(),
+      locale: const Locale('vi', 'VN'),
     );
   }
 }

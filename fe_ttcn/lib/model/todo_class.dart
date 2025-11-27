@@ -1,14 +1,13 @@
+// lib/model/todo_class.dart
 class ToDo {
-  // khai báo các thuộc tính map với cơ sở dữ liệu
-  int? id;
+  final int? id;
   String title;
   String? description;
-  int isCompleted; // 0: chưa hoàn thành, 1: đã hoàn thành
+  int isCompleted;
   String? dueDate;
-  String createdAt;
+  final String createdAt;
   String? updatedAt;
 
-  // ham khởi tạo
   ToDo({
     this.id,
     required this.title,
@@ -19,20 +18,6 @@ class ToDo {
     this.updatedAt,
   });
 
-  // Convert Map (SQLite) -> Todo object
-  factory ToDo.fromMap(Map<String, dynamic> map) {
-    return ToDo(
-      id: map['id'],
-      title: map['title'],
-      description: map['description'],
-      isCompleted: map['is_completed'],
-      dueDate: map['due_date'],
-      createdAt: map['created_at'],
-      updatedAt: map['updated_at'],
-    );
-  }
-
-  // Convert Todo object -> Map (SQLite)
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -43,5 +28,37 @@ class ToDo {
       'created_at': createdAt,
       'updated_at': updatedAt,
     };
+  }
+
+  static ToDo fromMap(Map<String, dynamic> map) {
+    return ToDo(
+      id: map['id'],
+      title: map['title'] ?? '',
+      description: map['description'],
+      isCompleted: map['is_completed'] ?? 0,
+      dueDate: map['due_date'],
+      createdAt: map['created_at'] ?? DateTime.now().toIso8601String(),
+      updatedAt: map['updated_at'],
+    );
+  }
+
+  ToDo copyWith({
+    int? id,
+    String? title,
+    String? description,
+    int? isCompleted,
+    String? dueDate,
+    String? createdAt,
+    String? updatedAt,
+  }) {
+    return ToDo(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      isCompleted: isCompleted ?? this.isCompleted,
+      dueDate: dueDate ?? this.dueDate,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
   }
 }
