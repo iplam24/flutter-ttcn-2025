@@ -260,26 +260,31 @@ class _CalendarScreenState extends State<CalendarScreen> with TickerProviderStat
               children: [
                 const Icon(Icons.calendar_today, size: 20, color: primaryGreen),
                 const SizedBox(width: 8),
-                Text(
-                  selectedDay == null
-                      ? "Chưa chọn ngày"
-                      : DateFormat('EEEE, dd/MM/yyyy', 'vi_VN').format(selectedDay),
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: primaryGreen),
+                Expanded(
+                  child: Text(
+                    selectedDay == null
+                        ? "Chưa chọn ngày"
+                        : DateFormat('EEEE, dd/MM/yyyy', 'vi_VN').format(selectedDay),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: primaryGreen,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-            const Padding(
-              padding: EdgeInsets.only(left: 16, right: 16, bottom: 10),
-              child: Text(
-                'Chú thích: S = Sáng (Tiết 1-5); C = Chiều (Tiết 6+)',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 Text(
                   "Hiện tại: Tuần 15",
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey.shade600,
+                  ),
                 ),
               ],
             ),
           ),
+
 
           // === DANH SÁCH MÔN HỌC (Card List) ===
           Expanded(
